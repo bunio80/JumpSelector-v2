@@ -34,11 +34,45 @@ namespace JumpSelector.Plugin
                 MyToolbarType.Seat
             };
             MyTerminalControlFactory.AddAction<MyJumpDrive>(myTerminalAction);
+
+            MyTerminalAction<MyJumpDrive> autoJumpAction = new MyTerminalAction<MyJumpDrive>("JumpSelectAuto", new StringBuilder("Jump Select - Auto Jump"), MyTerminalActionIcons.STATION_ON);
+            autoJumpAction.Action = new Action<MyJumpDrive>(AutoJump);
+            autoJumpAction.Writer = delegate (MyJumpDrive block, StringBuilder builder)
+            {
+                builder.Append("Auto Jump");
+            };
+            autoJumpAction.ValidForGroups = false;
+            autoJumpAction.InvalidToolbarTypes = new List<MyToolbarType>
+            {
+                MyToolbarType.Character,
+                MyToolbarType.ButtonPanel,
+                MyToolbarType.Seat
+            };
+            MyTerminalControlFactory.AddAction<MyJumpDrive>(autoJumpAction);
+
+            MyTerminalAction<MyJumpDrive> autoJumpGpsAction = new MyTerminalAction<MyJumpDrive>("JumpSelectAutoGps", new StringBuilder("Jump Select - Auto GPS"), MyTerminalActionIcons.STATION_ON);
+            autoJumpGpsAction.ActionWithParameters = new Action<MyJumpDrive, List<MyTerminalActionParameter>>(AutoJumpToGps);
+            autoJumpGpsAction.Writer = delegate (MyJumpDrive block, StringBuilder builder)
+            {
+                builder.Append("Auto GPS");
+            };
+            autoJumpGpsAction.ValidForGroups = false;
+            autoJumpGpsAction.InvalidToolbarTypes = new List<MyToolbarType>
+            {
+                MyToolbarType.Character,
+                MyToolbarType.ButtonPanel,
+                MyToolbarType.Seat
+            };
+            autoJumpGpsAction.Parameters = new List<MyTerminalActionParameter>
+            {
+                new MyTerminalActionParameter("GPS name", MyTerminalActionParameterType.String)
+            };
+            MyTerminalControlFactory.AddAction<MyJumpDrive>(autoJumpGpsAction);
         }
 
         public static void ShowJumpSelector(MyJumpDrive block)
         {
-            if (block.IDModule.ShareMode == MyOwnershipShareModeEnum.All || (block.GetPlayerRelationToOwner() == MyRelationsBetweenPlayerAndBlock.Owner || block.GetPlayerRelationToOwner() == MyRelationsBetweenPlayerAndBlock.FactionShare))
+            if (HasPermission(block))
             {
                 MyGuiSandbox.AddScreen(new JumpSelectorGui(block));
             }
@@ -47,6 +81,57 @@ namespace JumpSelector.Plugin
                 MyGuiSandbox.Show(new StringBuilder("You do not have permission to use this block"), VRage.Utils.MyStringId.GetOrCompute("Invalid Permissions"));
                 return;
             }
+        }
+
+        public static void AutoJump(MyJumpDrive block)
+        {
+            if (!HasPermission(block))
+            {
+                MyGuiSandbox.Show(new StringBuilder("You do not have permission to use this block"), VRage.Utils.MyStringId.GetOrCompute("Invalid Permissions"));
+                return;
+            }
+
+            string error;
+            if (!JumpSelectorGui.TryAutoJump(block, out error))
+            {
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    MyGuiSandbox.Show(new StringBuilder(error), VRage.Utils.MyStringId.GetOrCompute("Jump Selector"));
+                }
+            }
+        }
+
+        public static void AutoJumpToGps(MyJumpDrive block, List<MyTerminalActionParameter> parameters)
+        {
+            if (!HasPermission(block))
+            {
+                MyGuiSandbox.Show(new StringBuilder("You do not have permission to use this block"), VRage.Utils.MyStringId.GetOrCompute("Invalid Permissions"));
+                return;
+            }
+
+            if (parameters == null || parameters.Count == 0)
+            {
+                MyGuiSandbox.Show(new StringBuilder("Missing GPS name parameter."), VRage.Utils.MyStringId.GetOrCompute("Jump Selector"));
+                return;
+            }
+
+            string gpsName = parameters[0].Value as string;
+            string error;
+            if (!JumpSelectorGui.TryJumpToGpsByName(block, gpsName, out error))
+            {
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    MyGuiSandbox.Show(new StringBuilder(error), VRage.Utils.MyStringId.GetOrCompute("Jump Selector"));
+                }
+            }
+        }
+
+        private static bool HasPermission(MyJumpDrive block)
+        {
+            return block != null
+                && (block.IDModule.ShareMode == MyOwnershipShareModeEnum.All
+                    || block.GetPlayerRelationToOwner() == MyRelationsBetweenPlayerAndBlock.Owner
+                    || block.GetPlayerRelationToOwner() == MyRelationsBetweenPlayerAndBlock.FactionShare);
         }
 
         public static IEnumerable<CodeInstruction> JumpSelectTranspiler(IEnumerable<CodeInstruction> instructions)
