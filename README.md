@@ -26,10 +26,10 @@ Quick Start (Automation)
 1. Open Jump Drive Custom Data.
 2. Set:
    JS_CMD=JUMP
-   JS_GPS=* Base Novus 004
+   JS_GPS=xxx
 3. The plugin executes the jump and sets:
    JS_CMD=IDLE
-   JS_STATUS=OK: * Base Novus 004
+   JS_STATUS=OK: xxx
 
 Automation API (Custom Data)
 ----------------------------
