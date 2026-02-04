@@ -127,7 +127,7 @@ namespace JumpSelector.Plugin
             Controls.Add(cancelButton);
             FocusedControl = distanceTextbox;
             gpsCombobox.SelectItemByIndex(lastSelectedGps);
-            radioButtonGroup.SelectByKey(1);
+            radioButtonGroup.SelectByKey(lastSelectedMode);
             distanceTextbox.SelectAll();
             confirmButton.ButtonClicked += confirmButton_OnButtonClick;
             cancelButton.ButtonClicked += cancelButton_OnButtonClick;
@@ -138,6 +138,87 @@ namespace JumpSelector.Plugin
             searchTextbox.TextChanged += FilterGpsList;
             searchTextbox.FocusChanged += SearchFocusChanged;
             searchTextbox.EnterPressed += _ => JumpToGPS();
+        }
+
+        public static bool TryAutoJump(MyJumpDrive block, out string error)
+        {
+            error = null;
+            if (block == null)
+            {
+                error = "Jump drive not found.";
+                return false;
+            }
+
+            MyGridJumpDriveSystem jumpSystem = block.CubeGrid.GridSystems.JumpSystem;
+            if (jumpSystem == null)
+            {
+                error = "Jump system not available.";
+                return false;
+            }
+
+            if (lastSelectedMode == 0)
+            {
+                IMyGps gps = FindGpsByName(lastSelectedGpsName);
+                if (gps == null)
+                {
+                    error = "No saved GPS selection. Open Jump Select and choose a GPS.";
+                    return false;
+                }
+                jumpSystem.RequestJump(gps.Name, gps.Coords, MySession.Static.LocalPlayerId);
+                return true;
+            }
+
+            double distanceKm;
+            if (!double.TryParse(lastDistance, out distanceKm))
+            {
+                error = "Invalid saved distance. Open Jump Select and enter a distance.";
+                return false;
+            }
+            double distanceMeters = distanceKm * 1000.0;
+            if (distanceMeters < 5000.01)
+            {
+                distanceMeters = 5000.01;
+            }
+            Vector3D direction;
+            if (!TryGetJumpDirection(block, out direction, out error))
+            {
+                return false;
+            }
+            Vector3D destination = block.CubeGrid.WorldMatrix.Translation + direction * distanceMeters;
+            jumpSystem.RequestJump("Blind Jump", destination, MySession.Static.LocalPlayerId);
+            return true;
+        }
+
+        public static bool TryJumpToGpsByName(MyJumpDrive block, string gpsName, out string error)
+        {
+            error = null;
+            if (block == null)
+            {
+                error = "Jump drive not found.";
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(gpsName))
+            {
+                error = "GPS name is empty.";
+                return false;
+            }
+
+            MyGridJumpDriveSystem jumpSystem = block.CubeGrid.GridSystems.JumpSystem;
+            if (jumpSystem == null)
+            {
+                error = "Jump system not available.";
+                return false;
+            }
+
+            IMyGps gps = FindGpsByName(gpsName.Trim());
+            if (gps == null)
+            {
+                error = "GPS not found.";
+                return false;
+            }
+
+            jumpSystem.RequestJump(gps.Name, gps.Coords, MySession.Static.LocalPlayerId);
+            return true;
         }
 
         public override void HandleUnhandledInput(bool receivedFocusInThisUpdate)
@@ -202,6 +283,8 @@ namespace JumpSelector.Plugin
             }
             lastSelectedGps = (int)gpsCombobox.GetSelectedKey();
             IMyGps myGps = gpsList.Values[lastSelectedGps];
+            lastSelectedGpsName = myGps.Name;
+            lastSelectedMode = 0;
             CloseScreen(false);
             JumpSystem.RequestJump(myGps.Name, myGps.Coords, MySession.Static.LocalPlayerId);
         }
@@ -225,15 +308,19 @@ namespace JumpSelector.Plugin
             {
                 num = 5000.01;
             }
-			MyPlayer Player = MySession.Static.LocalHumanPlayer;
-			Vector3D value;
-			if (Player.Controller.ControlledEntity is MyShipController)
-				value = Vector3D.Transform(Base6Directions.GetVector((Player.Controller.ControlledEntity as MyShipController).Orientation.Forward), JumpDrive.CubeGrid.WorldMatrix.GetOrientation());
-			else if (Player.Controller.ControlledEntity is IMyTurretControlBlock)
-				value = (Player.Controller.ControlledEntity as IMyTurretControlBlock).GetShootDirection();
-			else
-				value = Player.Controller.ControlledEntity.GetHeadMatrix(true).GetDirectionVector(Base6Directions.Direction.Forward);
-			Vector3D destination = JumpDrive.CubeGrid.WorldMatrix.Translation + value * num;
+            Vector3D direction;
+            string error;
+            if (!TryGetJumpDirection(JumpDrive, out direction, out error))
+            {
+                distanceTextbox.Clear();
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    MyGuiSandbox.Show(new StringBuilder(error), VRage.Utils.MyStringId.GetOrCompute("Jump Selector"));
+                }
+                return;
+            }
+            lastSelectedMode = 1;
+            Vector3D destination = JumpDrive.CubeGrid.WorldMatrix.Translation + direction * num;
             CloseScreen(false);
             JumpSystem.RequestJump("Blind Jump", destination, MySession.Static.LocalPlayerId);
         }
@@ -274,6 +361,7 @@ namespace JumpSelector.Plugin
             {
                 distanceTextbox.SelectAll();
                 radioButtonGroup.SelectByKey(1);
+                lastSelectedMode = 1;
             }
         }
 
@@ -283,6 +371,7 @@ namespace JumpSelector.Plugin
             {
                 gpsCombobox.IsActiveControl = true;
                 radioButtonGroup.SelectByKey(0);
+                lastSelectedMode = 0;
             }
         }
 
@@ -373,12 +462,59 @@ namespace JumpSelector.Plugin
             {
                 searchTextbox.SelectAll();
                 radioButtonGroup.SelectByKey(0);
+                lastSelectedMode = 0;
             }
         }
 
         private void DistanceTextChanged(MyGuiControlTextbox obj)
         {
             radioButtonGroup.SelectByKey(1);
+            lastSelectedMode = 1;
+        }
+
+        private static IMyGps FindGpsByName(string gpsName)
+        {
+            if (string.IsNullOrWhiteSpace(gpsName))
+            {
+                return null;
+            }
+            List<IMyGps> list = new List<IMyGps>();
+            MySession.Static.Gpss.GetGpsList(MySession.Static.LocalPlayerId, list);
+            foreach (IMyGps gps in list)
+            {
+                if (string.Equals(gps.Name, gpsName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return gps;
+                }
+            }
+            return null;
+        }
+
+        private static bool TryGetJumpDirection(MyJumpDrive jumpDrive, out Vector3D direction, out string error)
+        {
+            error = null;
+            direction = Vector3D.Forward;
+            MyPlayer player = MySession.Static.LocalHumanPlayer;
+            if (player == null || player.Controller == null || player.Controller.ControlledEntity == null)
+            {
+                error = "No controlled entity for jump direction.";
+                return false;
+            }
+
+            if (player.Controller.ControlledEntity is MyShipController)
+            {
+                direction = Vector3D.Transform(Base6Directions.GetVector((player.Controller.ControlledEntity as MyShipController).Orientation.Forward), jumpDrive.CubeGrid.WorldMatrix.GetOrientation());
+                return true;
+            }
+
+            if (player.Controller.ControlledEntity is IMyTurretControlBlock)
+            {
+                direction = (player.Controller.ControlledEntity as IMyTurretControlBlock).GetShootDirection();
+                return true;
+            }
+
+            direction = player.Controller.ControlledEntity.GetHeadMatrix(true).GetDirectionVector(Base6Directions.Direction.Forward);
+            return true;
         }
 
         private static int CompareJumpDriveByCustomName(MyJumpDrive a, MyJumpDrive b)
@@ -453,6 +589,10 @@ namespace JumpSelector.Plugin
         private static int lastSelectedGps = 0;
 
         private static string lastDistance = "5";
+
+        private static string lastSelectedGpsName = string.Empty;
+
+        private static int lastSelectedMode = 1;
 
         private List<MyJumpDrive> charging = new List<MyJumpDrive>();
 
